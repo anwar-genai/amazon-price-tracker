@@ -99,6 +99,24 @@ def add_product(url, target_price=None):
         st.success("Product added successfully!")
         st.cache_data.clear()
         st.rerun()
+    except requests.exceptions.HTTPError as e:
+        # Extract error detail from response
+        error_detail = "Unknown error"
+        try:
+            if hasattr(e, 'response') and e.response is not None:
+                error_data = e.response.json()
+                if "detail" in error_data:
+                    error_detail = error_data["detail"]
+                else:
+                    error_detail = str(error_data)
+            else:
+                error_detail = str(e)
+        except:
+            if hasattr(e, 'response') and e.response is not None:
+                error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
+            else:
+                error_detail = str(e)
+        st.error(f"Error adding product: {error_detail}")
     except Exception as e:
         st.error(f"Error adding product: {str(e)}")
 
@@ -113,7 +131,7 @@ with st.sidebar:
         product_url = st.text_input("Amazon Product URL", placeholder="https://www.amazon.com/...")
         target_price = st.number_input("Target Price (optional)", min_value=0.0, step=0.01, value=0.0)
         
-        submit = st.form_submit_button("Track Product", use_container_width=True)
+        submit = st.form_submit_button("Track Product", width='stretch')
         
         if submit:
             if product_url:
@@ -124,7 +142,7 @@ with st.sidebar:
     st.divider()
     
     # Refresh button
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    if st.button("🔄 Refresh Data", width='stretch'):
         st.cache_data.clear()
         st.rerun()
     
@@ -236,15 +254,15 @@ with tab1:
                     col_btn1, col_btn2, col_btn3 = st.columns(3)
                     
                     with col_btn1:
-                        if st.button("📊 Chart", key=f"chart_{product['id']}", use_container_width=True):
+                        if st.button("📊 Chart", key=f"chart_{product['id']}", width='stretch'):
                             st.session_state['selected_product'] = product['id']
                     
                     with col_btn2:
-                        if st.button("🔗 Link", key=f"link_{product['id']}", use_container_width=True):
+                        if st.button("🔗 Link", key=f"link_{product['id']}", width='stretch'):
                             st.write(f"[Open Product]({product['url']})")
                     
                     with col_btn3:
-                        if st.button("🗑️ Remove", key=f"delete_{product['id']}", use_container_width=True):
+                        if st.button("🗑️ Remove", key=f"delete_{product['id']}", width='stretch'):
                             delete_product(product['id'])
                 
                 st.divider()
@@ -332,7 +350,7 @@ with tab2:
                 height=500
             )
             
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
             
             # Price distribution
             col1, col2 = st.columns(2)
@@ -345,7 +363,7 @@ with tab2:
                     nbins=20,
                     title="Price Frequency"
                 )
-                st.plotly_chart(hist_fig, use_container_width=True)
+                st.plotly_chart(hist_fig, width='stretch')
             
             with col2:
                 st.subheader("Price Statistics")
@@ -360,7 +378,7 @@ with tab2:
                         f"${df['price'].std():.2f}"
                     ]
                 })
-                st.dataframe(stats_df, hide_index=True, use_container_width=True)
+                st.dataframe(stats_df, hide_index=True, width='stretch')
         
         else:
             st.info("No price history available yet. Check back later!")
