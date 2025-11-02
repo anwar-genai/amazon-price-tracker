@@ -94,7 +94,7 @@ def add_product(url, target_price=None):
         if target_price:
             payload["target_price"] = float(target_price)
         
-        response = requests.post(f"{API_URL}/products", json=payload, timeout=10)
+        response = requests.post(f"{API_URL}/products", json=payload, timeout=60)
         response.raise_for_status()
         st.success("Product added successfully!")
         st.cache_data.clear()
@@ -117,6 +117,10 @@ def add_product(url, target_price=None):
             else:
                 error_detail = str(e)
         st.error(f"Error adding product: {error_detail}")
+    except requests.exceptions.Timeout:
+        st.error("Request timed out. Selenium scraping can take 30-60 seconds. Please try again or check if the backend is running.")
+    except requests.exceptions.ConnectionError:
+        st.error("Could not connect to the backend. Make sure the backend server is running on http://localhost:8000")
     except Exception as e:
         st.error(f"Error adding product: {str(e)}")
 
