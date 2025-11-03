@@ -6,7 +6,9 @@
     "permissions": [
       "storage",
       "notifications",
-      "alarms"
+      "alarms",
+      "tabs",
+      "activeTab"
     ],
     "host_permissions": [
       "https://www.amazon.com/*",
