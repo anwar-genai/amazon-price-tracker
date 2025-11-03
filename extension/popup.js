@@ -17,15 +17,36 @@ function showMessage(text, type = 'success') {
 async function checkCurrentPage() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   
-  if (tab.url && tab.url.includes('amazon.com') && tab.url.includes('/dp/')) {
+  if (tab.url && /\bamazon\./.test(tab.url) && tab.url.includes('/dp/')) {
     document.getElementById('currentPage').style.display = 'block';
     
     // Get product info from content script
     chrome.tabs.sendMessage(tab.id, { action: 'getProductInfo' }, (response) => {
+      if (chrome.runtime.lastError) {
+        // Content script not ready on this page yet
+        showMessage('Please wait for the page to finish loading, then reopen the popup.', 'error');
+        return;
+      }
       if (response) {
         displayCurrentProduct(response, tab.url);
       }
     });
+
+    // Also check if this exact URL is already tracked to tailor the UI
+    try {
+      const res = await fetch(`${API_URL}/products`);
+      const products = await res.json();
+      const alreadyTracked = Array.isArray(products) && products.some(p => p.url === tab.url);
+      const container = document.getElementById('currentProduct');
+      if (alreadyTracked && container) {
+        // When displayCurrentProduct runs, replace the button with a tracked badge
+        // We delay a tick to let the DOM render
+        setTimeout(() => markCurrentAsTracked(), 0);
+        showMessage('Product already being tracked', 'success');
+      }
+    } catch (_e) {
+      // ignore
+    }
   }
 }
 
@@ -54,9 +75,28 @@ function displayCurrentProduct(product, url) {
   });
 }
 
+// Replace the track button with a non-interactive tracked badge
+function markCurrentAsTracked() {
+  const trackBtn = document.getElementById('trackBtn');
+  if (trackBtn) {
+    trackBtn.outerHTML = '<div style="margin-top:8px;padding:10px;text-align:center;background:#eef9f1;color:#067d62;border-radius:6px;font-weight:600;">Already tracked ✓</div>';
+  }
+  const input = document.getElementById('targetPrice');
+  if (input) {
+    input.disabled = true;
+    input.placeholder = 'Already tracked';
+  }
+}
+
 // Track product
 async function trackProduct(url, targetPrice) {
   try {
+    const trackBtn = document.getElementById('trackBtn');
+    if (trackBtn) {
+      trackBtn.disabled = true;
+      trackBtn.textContent = 'Tracking…';
+    }
+
     const response = await fetch(`${API_URL}/products`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -70,8 +110,18 @@ async function trackProduct(url, targetPrice) {
     
     showMessage('Product tracked successfully!', 'success');
     loadTrackedProducts();
+
+    if (trackBtn) {
+      trackBtn.textContent = 'Tracked ✓';
+      trackBtn.disabled = true;
+    }
   } catch (error) {
     showMessage(error.message, 'error');
+    const trackBtn = document.getElementById('trackBtn');
+    if (trackBtn) {
+      trackBtn.textContent = 'Track This Product';
+      trackBtn.disabled = false;
+    }
   }
 }
 
