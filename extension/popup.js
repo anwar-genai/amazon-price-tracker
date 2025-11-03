@@ -132,4 +132,13 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Refresh every 30 seconds
   setInterval(loadTrackedProducts, 30000);
+
+  // Settings: open dashboard in a new tab
+  const settingsBtn = document.getElementById('settingsBtn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      // Open Streamlit dashboard
+      chrome.tabs.create({ url: 'http://localhost:8501' });
+    });
+  }
 });
