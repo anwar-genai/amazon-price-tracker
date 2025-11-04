@@ -199,6 +199,8 @@ async function loadTrackedProducts() {
     
     const html = sortedProducts.map(product => {
       const isBelow = product.target_price && product.current_price <= product.target_price;
+      const editLabel = product.target_price ? 'Update target' : 'Set target';
+      const editClass = product.target_price ? 'btn btn-primary edit-target-btn' : 'btn btn-ghost edit-target-btn';
       return `
       <div class="product-item ${isBelow ? 'below-target' : ''}" data-id="${product.id}">
         <img src="${product.image_url || 'icons/icon48.png'}" alt="Product">
@@ -210,10 +212,17 @@ async function loadTrackedProducts() {
           </div>
           ${isBelow ? 
             `<div class="price-drop">✓ Below target price!</div>` : ''}
+          ${product.target_price != null ? `<div class="target-line">Target: $${Number(product.target_price).toFixed(2)}</div>` : ''}
           <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
             <button class="untrack-btn" data-id="${product.id}" style="padding:6px 10px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;">Untrack</button>
-            <button class="edit-target-btn" data-id="${product.id}" style="padding:6px 10px;background:#6875F5;color:#fff;border:none;border-radius:4px;cursor:pointer;">Update target</button>
+            <button class="${editClass}" data-id="${product.id}">${editLabel}</button>
           </div>
+          <div class="target-editor" data-id="${product.id}" style="margin-top:8px;">
+            <input type="number" class="target-input" step="0.01" placeholder="Target price" value="${product.target_price ?? ''}" style="padding:6px;border:1px solid #ddd;border-radius:4px;width:130px;">
+            <button class="save-target-btn" data-id="${product.id}" style="padding:6px 10px;background:#067D62;color:#fff;border:none;border-radius:4px;cursor:pointer;">Save</button>
+            <button class="cancel-target-btn" data-id="${product.id}" style="padding:6px 10px;background:#aaa;color:#fff;border:none;border-radius:4px;cursor:pointer;">Cancel</button>
+          </div>
+          <div class="item-status" id="status-${product.id}"></div>
         </div>
       </div>
     `}).join('');
@@ -227,7 +236,13 @@ async function loadTrackedProducts() {
     
     // Add click listeners
     document.querySelectorAll('.product-item').forEach(item => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (e) => {
+        // Ignore clicks on interactive controls/editors
+        if (e.target.closest('.untrack-btn, .edit-target-btn, .save-target-btn, .cancel-target-btn, .target-editor, .target-input')) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         const productId = item.dataset.id;
         const product = sortedProducts.find(p => p.id == productId);
         if (product) {
@@ -253,26 +268,96 @@ async function loadTrackedProducts() {
     });
 
     document.querySelectorAll('.edit-target-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.getAttribute('data-id');
-        const product = sortedProducts.find(p => p.id == id);
-        const current = product && product.target_price ? product.target_price : '';
-        const newVal = prompt('Set target price (leave empty to clear):', current);
-        if (newVal === null) return; // cancelled
-        const payload = { target_price: newVal === '' ? null : parseFloat(newVal) };
+        const editor = document.querySelector(`.target-editor[data-id="${id}"]`);
+        if (editor) editor.classList.add('open');
+      });
+    });
+
+    document.querySelectorAll('.cancel-target-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        const editor = document.querySelector(`.target-editor[data-id="${id}"]`);
+        if (editor) editor.classList.remove('open');
+      });
+    });
+
+    document.querySelectorAll('.save-target-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        const editor = document.querySelector(`.target-editor[data-id="${id}"]`);
+        const input = editor?.querySelector('.target-input');
+        const val = input?.value ?? '';
+        // Validate number input
+        if (val !== '' && isNaN(parseFloat(val))) {
+          const statusEl = document.getElementById(`status-${id}`);
+          if (statusEl) { statusEl.className = 'item-status error'; statusEl.textContent = 'Enter a valid number'; }
+          return;
+        }
+        const payload = { target_price: val === '' ? null : parseFloat(val) };
+        const statusEl = document.getElementById(`status-${id}`);
         try {
-          const resp = await fetch(`${API_URL}/products/${id}`, {
+          if (statusEl) { statusEl.className = 'item-status'; statusEl.textContent = 'Saving…'; }
+          btn.disabled = true; if (input) input.disabled = true;
+          // Try PATCH first, then PUT, then POST fallback
+          let resp = await fetch(`${API_URL}/products/${id}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
             body: JSON.stringify(payload)
           });
-          if (!resp.ok) throw new Error('Failed to update target');
-          showMessage('Target price updated', 'success');
-          loadTrackedProducts();
+          if (!resp.ok && (resp.status === 405 || resp.status === 404)) {
+            resp = await fetch(`${API_URL}/products/${id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+          }
+          if (!resp.ok && (resp.status === 404 || resp.status === 405)) {
+            // Fallback to POST /products with URL upsert if supported
+            const product = Array.isArray(sortedProducts) ? sortedProducts.find(p => p.id == id) : null;
+            const body = product ? { url: product.url, target_price: payload.target_price } : payload;
+            resp = await fetch(`${API_URL}/products`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify(body)
+            });
+            // If creating with target fails due to duplicate, delete and recreate with target
+            if (!resp.ok && resp.status === 400 && product) {
+              await fetch(`${API_URL}/products/${id}`, { method: 'DELETE' });
+              resp = await fetch(`${API_URL}/products`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({ url: product.url, target_price: payload.target_price })
+              });
+            }
+          }
+          if (!resp.ok) {
+            let detail = 'Failed to update target';
+            try { const data = await resp.json(); detail = data.detail || JSON.stringify(data); } catch {}
+            throw new Error(detail);
+          }
+          if (statusEl) { statusEl.className = 'item-status success'; statusEl.textContent = (val === '' ? 'Target cleared' : 'Target saved'); }
+          // Flash the card
+          const card = document.querySelector(`.product-item[data-id="${id}"]`);
+          if (card) { card.classList.add('flash-success'); setTimeout(()=>card.classList.remove('flash-success'), 900); }
+          await loadTrackedProducts();
         } catch (err) {
-          showMessage(err.message, 'error');
+          if (statusEl) { statusEl.className = 'item-status error'; statusEl.textContent = err.message; }
+        } finally {
+          btn.disabled = false; if (input) input.disabled = false; if (editor) editor.classList.remove('open');
         }
+      });
+    });
+
+    // Prevent clicks in the input from bubbling to the product item
+    document.querySelectorAll('.target-input').forEach(input => {
+      ['click','mousedown','mouseup','keydown','keyup','input','focus'].forEach(ev => {
+        input.addEventListener(ev, e => { e.stopPropagation(); });
       });
     });
     

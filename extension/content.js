@@ -1,5 +1,16 @@
 // content.js - Runs on Amazon product pages
 
+// Normalize price text like "$21.89", "$6,187.21", "US$21.89" → "$21.89"
+function normalizePriceText(text) {
+  if (!text) return null;
+  // Pick first number with optional thousands separators and decimals
+  const match = String(text).replace(/\s+/g, ' ').match(/([€£$]?\s?)([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.[0-9]{1,2})?/);
+  if (!match) return null;
+  const symbol = match[1] ? match[1].replace(/\s/g, '') : '';
+  const numeric = match[0].replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+  return symbol + numeric;
+}
+
 // Extract product information from Amazon page
 function getProductInfo() {
     try {
@@ -9,17 +20,21 @@ function getProductInfo() {
       
       // Get price (multiple possible locations)
       let price = null;
-      const priceSelectors = [
-        '.a-price .a-offscreen',
-        '#priceblock_ourprice',
-        '#priceblock_dealprice',
-        '.a-price-whole'
-      ];
+    const priceSelectors = [
+      '#corePrice_feature_div .a-offscreen',
+      '.a-price .a-offscreen',
+      '#priceblock_ourprice',
+      '#priceblock_dealprice',
+      '#price_inside_buybox',
+      '#tp_price_block_total_price_ww',
+      '.reinventPricePriceToPayMargin .a-offscreen',
+      '.a-price-whole'
+    ];
       
       for (const selector of priceSelectors) {
         const priceElement = document.querySelector(selector);
         if (priceElement) {
-          price = priceElement.textContent.trim();
+        price = normalizePriceText(priceElement.textContent.trim());
           break;
         }
       }
