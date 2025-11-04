@@ -10,6 +10,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+try:
+    from streamlit_autorefresh import st_autorefresh  # optional
+except Exception:
+    st_autorefresh = None
 
 # Configuration
 API_URL = "http://localhost:8000/api"
@@ -76,6 +80,29 @@ def fetch_price_history(product_id):
     except Exception as e:
         return []
 
+def update_target(product_id: int, url: str, target_price):
+    """Update or set target price; return (ok: bool, error: str|None)."""
+    try:
+        payload = {"target_price": float(target_price) if target_price is not None else None}
+        # Try PATCH
+        resp = requests.patch(f"{API_URL}/products/{product_id}", json=payload, timeout=10)
+        if resp.status_code in (404, 405):
+            resp = requests.put(f"{API_URL}/products/{product_id}", json=payload, timeout=10)
+        if resp.status_code in (404, 405):
+            resp = requests.post(f"{API_URL}/products", json={"url": url, **payload}, timeout=15)
+            if resp.status_code == 400:
+                requests.delete(f"{API_URL}/products/{product_id}", timeout=10)
+                resp = requests.post(f"{API_URL}/products", json={"url": url, **payload}, timeout=15)
+        resp.raise_for_status()
+        st.cache_data.clear()
+        return True, None
+    except Exception as e:
+        try:
+            detail = resp.json().get("detail") if 'resp' in locals() and resp is not None else str(e)
+        except Exception:
+            detail = str(e)
+        return False, detail
+
 def delete_product(product_id):
     """Delete a tracked product"""
     try:
@@ -126,6 +153,8 @@ def add_product(url, target_price=None):
 
 # Header
 st.markdown('<p class="main-header">🏷️ Amazon Price Tracker Dashboard</p>', unsafe_allow_html=True)
+if st_autorefresh:
+    st_autorefresh(interval=15000, key="auto_refresh")
 
 # Sidebar - Add new product
 with st.sidebar:
@@ -204,32 +233,59 @@ if alerts:
             st.write(f"Current: ${product['current_price']:.2f} | Target: ${product['target_price']:.2f}")
         
         with col2:
-            if st.button("View", key=f"alert_{product['id']}"):
-                st.session_state['selected_product'] = product['id']
+            try:
+                st.link_button("View", product['url'], key=f"alert_link_{product['id']}")
+            except Exception:
+                st.markdown(f"[View]({product['url']})")
 
 st.divider()
 
 # Tabs
-tab1, tab2, tab3 = st.tabs(["📋 All Products", "📈 Price Trends", "⚙️ Settings"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 All Products", "📈 Price Trends", "⚙️ Settings", "🎯 Below Target"])
 
 # Tab 1: All Products
 with tab1:
     st.header("All Tracked Products")
     
-    # Sort options
-    col1, col2 = st.columns([2, 2])
+    # Persisted sort and filter options
+    if 'sort_by' not in st.session_state: st.session_state['sort_by'] = "Recent"
+    if 'only_below' not in st.session_state: st.session_state['only_below'] = False
+    if 'search' not in st.session_state: st.session_state['search'] = ""
+
+    col1, col2, col3 = st.columns([2, 2, 2])
     with col1:
-        sort_by = st.selectbox("Sort by", ["Recent", "Price: Low to High", "Price: High to Low", "Name"])
+        sort_by = st.selectbox("Sort by", ["Recent", "Price: Low to High", "Price: High to Low", "Name", "Below target first"], index=["Recent","Price: Low to High","Price: High to Low","Name","Below target first"].index(st.session_state['sort_by'])) 
+        st.session_state['sort_by'] = sort_by
+    with col2:
+        only_below = st.checkbox("Show only below target", value=st.session_state['only_below'])
+        st.session_state['only_below'] = only_below
+    with col3:
+        search = st.text_input("Search title", value=st.session_state['search'], placeholder="Type to filter...")
+        st.session_state['search'] = search
     
+    # Filter products
+    filtered = products
+    if only_below:
+        filtered = [p for p in filtered if p.get('target_price') and p['current_price'] <= p['target_price']]
+    if search:
+        s = search.lower()
+        filtered = [p for p in filtered if s in p['title'].lower()]
+
     # Sort products
     if sort_by == "Price: Low to High":
-        products_sorted = sorted(products, key=lambda x: x['current_price'])
+        products_sorted = sorted(filtered, key=lambda x: x['current_price'])
     elif sort_by == "Price: High to Low":
-        products_sorted = sorted(products, key=lambda x: x['current_price'], reverse=True)
+        products_sorted = sorted(filtered, key=lambda x: x['current_price'], reverse=True)
     elif sort_by == "Name":
-        products_sorted = sorted(products, key=lambda x: x['title'])
+        products_sorted = sorted(filtered, key=lambda x: x['title'])
+    elif sort_by == "Below target first":
+        def below_key(p):
+            if p.get('target_price'):
+                return 0 if p['current_price'] <= p['target_price'] else 1
+            return 2
+        products_sorted = sorted(filtered, key=below_key)
     else:
-        products_sorted = sorted(products, key=lambda x: x['created_at'], reverse=True)
+        products_sorted = sorted(filtered, key=lambda x: x['created_at'], reverse=True)
     
     # Display products in grid
     cols = st.columns(2)
@@ -249,11 +305,40 @@ with tab1:
                     st.markdown(f"**{product['title'][:60]}...**")
                     st.markdown(f"<h3 style='color: #B12704; margin: 0;'>${product['current_price']:.2f}</h3>", unsafe_allow_html=True)
                     
-                    if product.get('target_price'):
+                    if product.get('target_price') is not None:
                         if product['current_price'] <= product['target_price']:
                             st.markdown(f"<span class='price-drop'>✓ Below target (${product['target_price']:.2f})</span>", unsafe_allow_html=True)
                         else:
                             st.write(f"Target: ${product['target_price']:.2f}")
+                    else:
+                        st.caption("No target set – expand below to add one.")
+                    
+                    # Inline editor for target
+                    with st.expander("Set/Update target", expanded=False):
+                        tcol1, tcol2 = st.columns([2,1])
+                        with tcol1:
+                            init_val = float(product.get('target_price') or 0.0)
+                            new_target = st.number_input(
+                                "Target price",
+                                key=f"tgt_{product['id']}",
+                                min_value=0.0,
+                                value=init_val,
+                                step=0.50,
+                                format="%.2f"
+                            )
+                        with tcol2:
+                            status = st.empty()
+                            if st.button("Save", key=f"save_target_{product['id']}"):
+                                with status.container():
+                                    st.info("Saving…")
+                                ok, err = update_target(product['id'], product['url'], new_target if new_target > 0 else None)
+                                if ok:
+                                    product['target_price'] = float(new_target) if new_target > 0 else None
+                                    with status.container():
+                                        st.success("Target saved")
+                                else:
+                                    with status.container():
+                                        st.error(err or "Failed to save")
                     
                     col_btn1, col_btn2, col_btn3 = st.columns(3)
                     
@@ -263,7 +348,7 @@ with tab1:
                     
                     with col_btn2:
                         if st.button("🔗 Link", key=f"link_{product['id']}", width='stretch'):
-                            st.write(f"[Open Product]({product['url']})")
+                            st.markdown(f"[Open Product]({product['url']})")
                     
                     with col_btn3:
                         if st.button("🗑️ Remove", key=f"delete_{product['id']}", width='stretch'):
@@ -436,6 +521,34 @@ with tab3:
             file_name=f"price_tracker_{datetime.now().strftime('%Y%m%d')}.csv",
             mime="text/csv"
         )
+
+# Tab 4: Below Target
+with tab4:
+    st.header("Products Below Target")
+    below = [p for p in products if p.get('target_price') and p['current_price'] <= p['target_price']]
+    if not below:
+        st.info("No products are currently below their target price.")
+    else:
+        cols = st.columns(2)
+        for idx, product in enumerate(below):
+            with cols[idx % 2]:
+                with st.container():
+                    c1, c2 = st.columns([1,3])
+                    with c1:
+                        if product.get('image_url'):
+                            st.image(product['image_url'], width=100)
+                        else:
+                            st.write("🖼️")
+                    with c2:
+                        st.markdown(f"**{product['title'][:60]}...**")
+                        st.markdown(f"<h3 style='color:#10b981;margin:0;'>${product['current_price']:.2f}</h3>", unsafe_allow_html=True)
+                        st.caption(f"Target: ${product['target_price']:.2f}")
+                        b1, b2 = st.columns(2)
+                        with b1:
+                            st.markdown(f"[Open Product]({product['url']})")
+                        with b2:
+                            if st.button("🗑️ Remove", key=f"bt_delete_{product['id']}"):
+                                delete_product(product['id'])
 
 # Footer
 st.divider()
