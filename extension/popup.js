@@ -161,7 +161,25 @@ async function loadTrackedProducts() {
     const response = await fetch(`${API_URL}/products`);
     const products = await response.json();
     // Newest first: use created_at if present, else fall back to id
-    const sortedProducts = Array.isArray(products) ? products.slice().sort((a, b) => {
+    // Read controls
+    const sortOrder = (document.getElementById('sortOrder')?.value) || 'newest';
+    const onlyBelow = !!document.getElementById('filterBelow')?.checked;
+
+    let sortedProducts = Array.isArray(products) ? products.slice() : products;
+    // Optional filter: only items at/below target
+    if (onlyBelow && Array.isArray(sortedProducts)) {
+      sortedProducts = sortedProducts.filter(p => p.target_price && p.current_price <= p.target_price);
+    }
+
+    sortedProducts = Array.isArray(sortedProducts) ? sortedProducts.sort((a, b) => {
+      if (sortOrder === 'priceAsc') {
+        return (a.current_price ?? 0) - (b.current_price ?? 0);
+      }
+      if (sortOrder === 'drop') {
+        const ad = a.target_price ? (a.current_price - a.target_price) : Number.POSITIVE_INFINITY;
+        const bd = b.target_price ? (b.current_price - b.target_price) : Number.POSITIVE_INFINITY;
+        return ad - bd; // most negative (biggest drop) first
+      }
       if (a.created_at && b.created_at) return new Date(b.created_at) - new Date(a.created_at);
       if (typeof a.id === 'number' && typeof b.id === 'number') return b.id - a.id;
       return 0;
@@ -179,8 +197,10 @@ async function loadTrackedProducts() {
       return;
     }
     
-    const html = sortedProducts.map(product => `
-      <div class="product-item" data-id="${product.id}">
+    const html = sortedProducts.map(product => {
+      const isBelow = product.target_price && product.current_price <= product.target_price;
+      return `
+      <div class="product-item ${isBelow ? 'below-target' : ''}" data-id="${product.id}">
         <img src="${product.image_url || 'icons/icon48.png'}" alt="Product">
         <div class="product-details">
           <div class="title">${product.title}</div>
@@ -188,7 +208,7 @@ async function loadTrackedProducts() {
             <div class="price">$${product.current_price.toFixed(2)}</div>
             <canvas class="sparkline" width="80" height="24" data-id="${product.id}"></canvas>
           </div>
-          ${product.target_price && product.current_price <= product.target_price ? 
+          ${isBelow ? 
             `<div class="price-drop">✓ Below target price!</div>` : ''}
           <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
             <button class="untrack-btn" data-id="${product.id}" style="padding:6px 10px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;">Untrack</button>
@@ -196,7 +216,7 @@ async function loadTrackedProducts() {
           </div>
         </div>
       </div>
-    `).join('');
+    `}).join('');
     
     document.getElementById('productList').innerHTML = html;
     // Render sparklines
@@ -278,6 +298,12 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.tabs.create({ url: DASHBOARD_URL });
     });
   }
+
+  // Controls listeners
+  const sortSelect = document.getElementById('sortOrder');
+  const filterBelow = document.getElementById('filterBelow');
+  if (sortSelect) sortSelect.addEventListener('change', loadTrackedProducts);
+  if (filterBelow) filterBelow.addEventListener('change', loadTrackedProducts);
 });
 
 // Fetch and render small sparkline for recent price history
