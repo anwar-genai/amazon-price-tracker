@@ -1,13 +1,22 @@
 
 let API_URL = 'http://localhost:8000/api';
+let DASHBOARD_URL = 'http://localhost:8501';
 // Load API URL from settings
-chrome.storage.sync.get({ apiUrl: API_URL }, cfg => { API_URL = cfg.apiUrl || API_URL; });
+chrome.storage.sync.get({ apiUrl: API_URL, dashboardUrl: DASHBOARD_URL }, cfg => {
+  API_URL = cfg.apiUrl || API_URL;
+  DASHBOARD_URL = cfg.dashboardUrl || DASHBOARD_URL;
+});
 
 // Canonicalize Amazon URL (strip query/hash) to avoid duplicates
 function canonicalizeAmazonUrl(url) {
   try {
     const u = new URL(url);
     if (!/amazon\./.test(u.hostname)) return url;
+    // Prefer /dp/ASIN format
+    const asinMatch = u.pathname.match(/\/dp\/([A-Z0-9]{10})/i) || u.pathname.match(/\/gp\/product\/([A-Z0-9]{10})/i);
+    if (asinMatch) {
+      u.pathname = `/dp/${asinMatch[1]}`;
+    }
     u.hash = '';
     u.search = '';
     return u.toString();
@@ -49,7 +58,11 @@ async function checkCurrentPage() {
     try {
       const res = await fetch(`${API_URL}/products`);
       const products = await res.json();
-      const alreadyTracked = Array.isArray(products) && products.some(p => p.url === tab.url);
+      const currentCanonical = canonicalizeAmazonUrl(tab.url);
+      const alreadyTracked = Array.isArray(products) && products.some(p => {
+        const pu = p.url || '';
+        return canonicalizeAmazonUrl(pu) === currentCanonical;
+      });
       const container = document.getElementById('currentProduct');
       if (alreadyTracked && container) {
         // When displayCurrentProduct runs, replace the button with a tracked badge
@@ -165,7 +178,10 @@ async function loadTrackedProducts() {
         <img src="${product.image_url || 'icons/icon48.png'}" alt="Product">
         <div class="product-details">
           <div class="title">${product.title}</div>
-          <div class="price">$${product.current_price.toFixed(2)}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="price">$${product.current_price.toFixed(2)}</div>
+            <canvas class="sparkline" width="80" height="24" data-id="${product.id}"></canvas>
+          </div>
           ${product.target_price && product.current_price <= product.target_price ? 
             `<div class="price-drop">✓ Below target price!</div>` : ''}
           <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
@@ -177,6 +193,11 @@ async function loadTrackedProducts() {
     `).join('');
     
     document.getElementById('productList').innerHTML = html;
+    // Render sparklines
+    document.querySelectorAll('canvas.sparkline').forEach(c => {
+      const pid = c.getAttribute('data-id');
+      renderSparkline(c, pid);
+    });
     
     // Add click listeners
     document.querySelectorAll('.product-item').forEach(item => {
@@ -248,8 +269,33 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsBtn = document.getElementById('settingsBtn');
   if (settingsBtn) {
     settingsBtn.addEventListener('click', () => {
-      // Open Streamlit dashboard
-      chrome.tabs.create({ url: 'http://localhost:8501' });
+      chrome.tabs.create({ url: DASHBOARD_URL });
     });
   }
 });
+
+// Fetch and render small sparkline for recent price history
+async function renderSparkline(canvas, productId) {
+  if (!canvas || !productId) return;
+  try {
+    const resp = await fetch(`${API_URL}/products/${productId}/history?limit=30`);
+    if (!resp.ok) return;
+    const data = await resp.json(); // expect [{date, price}, ...]
+    if (!Array.isArray(data) || data.length < 2) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    const prices = data.map(d => d.price);
+    const min = Math.min(...prices), max = Math.max(...prices);
+    const xStep = w / (prices.length - 1);
+    ctx.strokeStyle = '#067D62';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    prices.forEach((p, i) => {
+      const x = i * xStep;
+      const y = h - (max === min ? 0.5*h : ((p - min) / (max - min)) * h);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  } catch {}
+}

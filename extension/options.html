@@ -23,11 +23,26 @@
     <div class="hint">Used by popup and background. Must match host permissions in manifest.</div>
   </div>
   <div class="row">
+    <label for="dashboardUrl">Dashboard URL</label>
+    <input id="dashboardUrl" type="text" placeholder="http://localhost:8501">
+  </div>
+  <div class="row">
     <label for="refreshMinutes">Background refresh interval (minutes)</label>
     <input id="refreshMinutes" type="number" min="1" step="1" value="30">
   </div>
   <div class="row">
     <label><input id="enableNotifications" type="checkbox" checked> Enable price drop notifications</label>
+  </div>
+  <div class="row">
+    <label>Quiet hours (no notifications)</label>
+    <div>
+      <input id="quietStart" type="time" value="22:00"> to
+      <input id="quietEnd" type="time" value="07:00">
+    </div>
+  </div>
+  <div class="row">
+    <label for="minNotifyMins">Minimum minutes between notifications for the same item</label>
+    <input id="minNotifyMins" type="number" min="1" step="1" value="60">
   </div>
   <div class="actions">
     <button id="saveBtn">Save</button>

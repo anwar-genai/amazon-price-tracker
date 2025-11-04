@@ -7,7 +7,10 @@ function loadConfig(callback) {
   chrome.storage.sync.get({
     apiUrl: API_URL,
     refreshMinutes: 30,
-    enableNotifications: true
+    enableNotifications: true,
+    quietStart: '22:00',
+    quietEnd: '07:00',
+    minNotifyMins: 60
   }, (cfg) => {
     API_URL = cfg.apiUrl || API_URL;
     callback && callback(cfg);
@@ -104,6 +107,8 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     // Notifications (optional per settings)
     loadConfig(async (cfg) => {
       if (!cfg.enableNotifications) return;
+      // Respect quiet hours
+      if (isWithinQuietHours(cfg.quietStart, cfg.quietEnd, new Date())) return;
       const response = await fetch(`${API_URL}/notifications`, { method: 'GET' });
       if (!response.ok) return;
       const notifications = await response.json();
@@ -111,6 +116,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   
       for (const n of notifications) {
         const notificationId = `price-drop-${n.id ?? Date.now()}`;
+        const urlKey = canonicalizeAmazonUrl(n.url || '');
+        const shouldNotify = await canNotify(urlKey, cfg.minNotifyMins);
+        if (!shouldNotify) continue;
         notificationTargetUrlById.set(notificationId, n.url);
         chrome.notifications.create(notificationId, {
           type: 'basic',
@@ -118,13 +126,48 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
           title: n.title || 'Price drop detected',
           message: n.message || 'A tracked item has dropped in price.',
           priority: 2
-        });
+        }, () => recordNotified(urlKey));
       }
     });
   } catch (_e) {
     // Swallow errors to keep the service worker stable
   }
 });
+
+// Quiet hours helper
+function isWithinQuietHours(startHHMM, endHHMM, now) {
+  try {
+    const [sh, sm] = (startHHMM || '22:00').split(':').map(Number);
+    const [eh, em] = (endHHMM || '07:00').split(':').map(Number);
+    const start = new Date(now); start.setHours(sh, sm, 0, 0);
+    const end = new Date(now); end.setHours(eh, em, 0, 0);
+    if (start <= end) {
+      return now >= start && now <= end;
+    } else {
+      // crosses midnight
+      return now >= start || now <= end;
+    }
+  } catch { return false; }
+}
+
+// Throttle notifications per item using storage
+async function canNotify(urlKey, minMinutes) {
+  return new Promise((resolve) => {
+    chrome.storage.local.get({ lastNotified: {} }, (data) => {
+      const last = data.lastNotified[urlKey];
+      if (!last) return resolve(true);
+      const diffMin = (Date.now() - last) / 60000;
+      resolve(diffMin >= Math.max(1, Number(minMinutes) || 60));
+    });
+  });
+}
+
+function recordNotified(urlKey) {
+  chrome.storage.local.get({ lastNotified: {} }, (data) => {
+    data.lastNotified[urlKey] = Date.now();
+    chrome.storage.local.set({ lastNotified: data.lastNotified });
+  });
+}
 
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
