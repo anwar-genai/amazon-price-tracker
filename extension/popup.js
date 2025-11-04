@@ -160,10 +160,16 @@ async function loadTrackedProducts() {
     `;
     const response = await fetch(`${API_URL}/products`);
     const products = await response.json();
+    // Newest first: use created_at if present, else fall back to id
+    const sortedProducts = Array.isArray(products) ? products.slice().sort((a, b) => {
+      if (a.created_at && b.created_at) return new Date(b.created_at) - new Date(a.created_at);
+      if (typeof a.id === 'number' && typeof b.id === 'number') return b.id - a.id;
+      return 0;
+    }) : products;
     
-    document.getElementById('productCount').textContent = products.length;
+    document.getElementById('productCount').textContent = sortedProducts.length;
     
-    if (products.length === 0) {
+    if (sortedProducts.length === 0) {
       document.getElementById('productList').innerHTML = `
         <div class="empty-state">
           <p>No products tracked yet</p>
@@ -173,7 +179,7 @@ async function loadTrackedProducts() {
       return;
     }
     
-    const html = products.map(product => `
+    const html = sortedProducts.map(product => `
       <div class="product-item" data-id="${product.id}">
         <img src="${product.image_url || 'icons/icon48.png'}" alt="Product">
         <div class="product-details">
@@ -203,7 +209,7 @@ async function loadTrackedProducts() {
     document.querySelectorAll('.product-item').forEach(item => {
       item.addEventListener('click', () => {
         const productId = item.dataset.id;
-        const product = products.find(p => p.id == productId);
+        const product = sortedProducts.find(p => p.id == productId);
         if (product) {
           chrome.tabs.create({ url: product.url });
         }
@@ -230,7 +236,7 @@ async function loadTrackedProducts() {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.getAttribute('data-id');
-        const product = products.find(p => p.id == id);
+        const product = sortedProducts.find(p => p.id == id);
         const current = product && product.target_price ? product.target_price : '';
         const newVal = prompt('Set target price (leave empty to clear):', current);
         if (newVal === null) return; // cancelled
