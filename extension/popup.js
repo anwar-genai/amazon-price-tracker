@@ -3,6 +3,17 @@ let API_URL = 'http://localhost:8000/api';
 // Load API URL from settings
 chrome.storage.sync.get({ apiUrl: API_URL }, cfg => { API_URL = cfg.apiUrl || API_URL; });
 
+// Canonicalize Amazon URL (strip query/hash) to avoid duplicates
+function canonicalizeAmazonUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/amazon\./.test(u.hostname)) return url;
+    u.hash = '';
+    u.search = '';
+    return u.toString();
+  } catch { return url; }
+}
+
 // Show message
 function showMessage(text, type = 'success') {
   const messageDiv = document.getElementById('message');
@@ -73,7 +84,7 @@ function displayCurrentProduct(product, url) {
   // Add event listener
   document.getElementById('trackBtn').addEventListener('click', () => {
     const targetPrice = document.getElementById('targetPrice').value;
-    trackProduct(url, targetPrice || null);
+    trackProduct(canonicalizeAmazonUrl(url), targetPrice || null);
   });
 }
 
@@ -130,6 +141,10 @@ async function trackProduct(url, targetPrice) {
 // Load tracked products
 async function loadTrackedProducts() {
   try {
+    // show skeleton
+    document.getElementById('productList').innerHTML = `
+      <div class="loading">Loading…</div>
+    `;
     const response = await fetch(`${API_URL}/products`);
     const products = await response.json();
     

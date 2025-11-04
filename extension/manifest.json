@@ -8,7 +8,8 @@
       "notifications",
       "alarms",
       "tabs",
-      "activeTab"
+      "activeTab",
+      "contextMenus"
     ],
     "host_permissions": [
       "https://*.amazon.com/*",

@@ -17,6 +17,17 @@ function loadConfig(callback) {
 // Keep a map of notificationId -> target URL so we can open it on click
 const notificationTargetUrlById = new Map();
 
+// Canonicalize Amazon URLs to reduce duplicates (strip query/hash)
+function canonicalizeAmazonUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/amazon\./.test(u.hostname)) return url;
+    u.hash = '';
+    u.search = '';
+    return u.toString();
+  } catch { return url; }
+}
+
 // On install/update: set up periodic checks
 function configureAlarm() {
   loadConfig((cfg) => {
@@ -32,6 +43,20 @@ function configureAlarm() {
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setBadgeBackgroundColor({ color: '#FF6A00' });
   configureAlarm();
+
+  // Create context menus
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'track-current-product',
+      title: 'Track this product',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'track-link',
+      title: 'Track product from link',
+      contexts: ['link']
+    });
+  });
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -99,6 +124,24 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   } catch (_e) {
     // Swallow errors to keep the service worker stable
   }
+});
+
+// Handle context menu clicks
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (!tab) return;
+  const targetUrl = canonicalizeAmazonUrl(info.linkUrl || info.pageUrl || tab.url || '');
+  if (!/https?:\/\/.*amazon\./.test(targetUrl) || !targetUrl.includes('/dp/')) return;
+  loadConfig(async () => {
+    try {
+      await fetch(`${API_URL}/products`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: targetUrl, target_price: null })
+      });
+      chrome.action.setBadgeText({ text: '✓' });
+      setTimeout(() => chrome.action.setBadgeText({ text: '' }), 1200);
+    } catch {}
+  });
 });
 
 // When user clicks a notification, open the product page
