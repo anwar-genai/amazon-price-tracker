@@ -55,6 +55,32 @@ st.markdown("""
         color: #ef4444;
         font-weight: bold;
     }
+    /* Button-like links */
+    .btn-link {
+        display: inline-block;
+        background: #FF9900;
+        color: #fff !important;
+        padding: 6px 12px;
+        border-radius: 6px;
+        text-decoration: none !important;
+        font-weight: 600;
+    }
+    .btn-link:hover { background: #FA8900; text-decoration: none !important; }
+    .btn-link:visited { color: #fff !important; text-decoration: none !important; }
+    .btn-link:focus { outline: none; text-decoration: none !important; }
+    .btn-outline {
+        display: inline-block;
+        background: #fff;
+        color: #FF9900 !important;
+        border: 1px solid #FF9900;
+        padding: 6px 12px;
+        border-radius: 6px;
+        text-decoration: none !important;
+        font-weight: 600;
+    }
+    .btn-outline:hover { background: #FFF4E5; text-decoration: none !important; }
+    .btn-outline:visited { color: #FF9900 !important; text-decoration: none !important; }
+    .btn-outline:focus { outline: none; text-decoration: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -233,10 +259,7 @@ if alerts:
             st.write(f"Current: ${product['current_price']:.2f} | Target: ${product['target_price']:.2f}")
         
         with col2:
-            try:
-                st.link_button("View", product['url'], key=f"alert_link_{product['id']}")
-            except Exception:
-                st.markdown(f"[View]({product['url']})")
+            st.markdown(f"<a class='btn-link' href='{product['url']}' target='_blank'>View</a>", unsafe_allow_html=True)
 
 st.divider()
 
@@ -545,7 +568,7 @@ with tab4:
                         st.caption(f"Target: ${product['target_price']:.2f}")
                         b1, b2 = st.columns(2)
                         with b1:
-                            st.markdown(f"[Open Product]({product['url']})")
+                            st.markdown(f"<a class='btn-link' href='{product['url']}' target='_blank'>Open product</a>", unsafe_allow_html=True)
                         with b2:
                             if st.button("🗑️ Remove", key=f"bt_delete_{product['id']}"):
                                 delete_product(product['id'])
