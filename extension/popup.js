@@ -1,5 +1,7 @@
 
-const API_URL = 'http://localhost:8000/api';
+let API_URL = 'http://localhost:8000/api';
+// Load API URL from settings
+chrome.storage.sync.get({ apiUrl: API_URL }, cfg => { API_URL = cfg.apiUrl || API_URL; });
 
 // Show message
 function showMessage(text, type = 'success') {
@@ -151,6 +153,10 @@ async function loadTrackedProducts() {
           <div class="price">$${product.current_price.toFixed(2)}</div>
           ${product.target_price && product.current_price <= product.target_price ? 
             `<div class="price-drop">✓ Below target price!</div>` : ''}
+          <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
+            <button class="untrack-btn" data-id="${product.id}" style="padding:6px 10px;background:#e74c3c;color:#fff;border:none;border-radius:4px;cursor:pointer;">Untrack</button>
+            <button class="edit-target-btn" data-id="${product.id}" style="padding:6px 10px;background:#6875F5;color:#fff;border:none;border-radius:4px;cursor:pointer;">Update target</button>
+          </div>
         </div>
       </div>
     `).join('');
@@ -164,6 +170,46 @@ async function loadTrackedProducts() {
         const product = products.find(p => p.id == productId);
         if (product) {
           chrome.tabs.create({ url: product.url });
+        }
+      });
+    });
+
+    // Action buttons (stop event bubbling)
+    document.querySelectorAll('.untrack-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        try {
+          const resp = await fetch(`${API_URL}/products/${id}`, { method: 'DELETE' });
+          if (!resp.ok) throw new Error('Failed to untrack');
+          showMessage('Removed from tracked items', 'success');
+          loadTrackedProducts();
+        } catch (err) {
+          showMessage(err.message, 'error');
+        }
+      });
+    });
+
+    document.querySelectorAll('.edit-target-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-id');
+        const product = products.find(p => p.id == id);
+        const current = product && product.target_price ? product.target_price : '';
+        const newVal = prompt('Set target price (leave empty to clear):', current);
+        if (newVal === null) return; // cancelled
+        const payload = { target_price: newVal === '' ? null : parseFloat(newVal) };
+        try {
+          const resp = await fetch(`${API_URL}/products/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!resp.ok) throw new Error('Failed to update target');
+          showMessage('Target price updated', 'success');
+          loadTrackedProducts();
+        } catch (err) {
+          showMessage(err.message, 'error');
         }
       });
     });

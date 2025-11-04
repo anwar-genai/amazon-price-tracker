@@ -1,17 +1,41 @@
 // background.js - MV3 service worker
 
-const API_URL = 'http://localhost:8000/api';
+let API_URL = 'http://localhost:8000/api';
+
+// Load config from storage
+function loadConfig(callback) {
+  chrome.storage.sync.get({
+    apiUrl: API_URL,
+    refreshMinutes: 30,
+    enableNotifications: true
+  }, (cfg) => {
+    API_URL = cfg.apiUrl || API_URL;
+    callback && callback(cfg);
+  });
+}
 
 // Keep a map of notificationId -> target URL so we can open it on click
 const notificationTargetUrlById = new Map();
 
 // On install/update: set up periodic checks
-chrome.runtime.onInstalled.addListener(() => {
-  // Create or reset an alarm to poll the backend for price updates
-  chrome.alarms.create('price-tracker-refresh', {
-    when: Date.now() + 5 * 1000, // start shortly after install
-    periodInMinutes: 30 // Chrome enforces a minimum of 1 minute; 30 is reasonable
+function configureAlarm() {
+  loadConfig((cfg) => {
+    chrome.alarms.clear('price-tracker-refresh', () => {
+      chrome.alarms.create('price-tracker-refresh', {
+        when: Date.now() + 5 * 1000,
+        periodInMinutes: Math.max(1, Number(cfg.refreshMinutes) || 30)
+      });
+    });
   });
+}
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.action.setBadgeBackgroundColor({ color: '#FF6A00' });
+  configureAlarm();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  configureAlarm();
 });
 
 // Handle messages from content/popup scripts
@@ -23,6 +47,11 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
       // Popups can't be programmatically opened as action popups; open as a tab instead
       const url = chrome.runtime.getURL('popup.html');
       chrome.tabs.create({ url });
+      sendResponse && sendResponse({ ok: true });
+      break;
+    }
+    case 'reconfigureAlarms': {
+      configureAlarm();
       sendResponse && sendResponse({ ok: true });
       break;
     }
@@ -39,23 +68,34 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== 'price-tracker-refresh') return;
 
   try {
-    // Expecting an array of notifications: [{ id, title, message, url, image_url }]
-    const response = await fetch(`${API_URL}/notifications`, { method: 'GET' });
-    if (!response.ok) return;
-    const notifications = await response.json();
-    if (!Array.isArray(notifications) || notifications.length === 0) return;
-
-    for (const n of notifications) {
-      const notificationId = `price-drop-${n.id ?? Date.now()}`;
-      notificationTargetUrlById.set(notificationId, n.url);
-      chrome.notifications.create(notificationId, {
-        type: 'basic',
-        iconUrl: n.image_url || 'icons/icon128.png',
-        title: n.title || 'Price drop detected',
-        message: n.message || 'A tracked item has dropped in price.',
-        priority: 2
-      });
+    // Update badge with count of items at/below target
+    const productsResp = await fetch(`${API_URL}/products`);
+    if (productsResp.ok) {
+      const products = await productsResp.json();
+      const count = Array.isArray(products) ? products.filter(p => p.target_price && p.current_price <= p.target_price).length : 0;
+      chrome.action.setBadgeText({ text: count > 0 ? String(count) : '' });
     }
+
+    // Notifications (optional per settings)
+    loadConfig(async (cfg) => {
+      if (!cfg.enableNotifications) return;
+      const response = await fetch(`${API_URL}/notifications`, { method: 'GET' });
+      if (!response.ok) return;
+      const notifications = await response.json();
+      if (!Array.isArray(notifications) || notifications.length === 0) return;
+  
+      for (const n of notifications) {
+        const notificationId = `price-drop-${n.id ?? Date.now()}`;
+        notificationTargetUrlById.set(notificationId, n.url);
+        chrome.notifications.create(notificationId, {
+          type: 'basic',
+          iconUrl: n.image_url || 'icons/icon128.png',
+          title: n.title || 'Price drop detected',
+          message: n.message || 'A tracked item has dropped in price.',
+          priority: 2
+        });
+      }
+    });
   } catch (_e) {
     // Swallow errors to keep the service worker stable
   }
